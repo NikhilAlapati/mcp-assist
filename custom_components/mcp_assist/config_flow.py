@@ -1108,8 +1108,16 @@ class MCPAssistOptionsFlow(config_entries.OptionsFlow):
                     if CONF_SYSTEM_PROMPT not in user_input:
                         user_input[CONF_SYSTEM_PROMPT] = ""  # Moltbot manages its own
 
-                # Store profile settings and proceed to MCP server settings
+                # Store profile settings
                 self.profile_options = user_input
+
+                # If a shared system entry already exists, avoid reconfiguring MCP server settings
+                if (
+                    self.config_entry.unique_id != SYSTEM_ENTRY_UNIQUE_ID
+                    and get_system_entry(self.hass) is not None
+                ):
+                    return self.async_create_entry(title="", data=self.profile_options)
+
                 return await self.async_step_mcp_server()
 
         # Get current values from options, then data, then defaults
