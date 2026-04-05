@@ -398,32 +398,58 @@ async def validate_external_mcp_server_connection(
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
-    try:
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(
-                f"{url}/",
-                headers=headers,
-                json={
-                    "jsonrpc": "2.0",
-                    "method": "tools/list",
-                    "params": {},
-                    "id": 1,
-                },
-            ) as resp:
-                if resp.status != 200:
-                    raise CannotConnect(
-                        f"External MCP server did not respond to tools/list (status {resp.status})"
-                    )
-                # Validate JSON-RPC response structure
-                data = await resp.json()
-                if "result" not in data or "tools" not in data["result"]:
-                    raise CannotConnect(
-                        "External MCP server returned invalid tools/list response"
-                    )
-                return {"title": "External MCP Server"}
-    except aiohttp.ClientError as err:
-        raise CannotConnect(f"Failed to connect to external MCP server: {err}") from err
+    json_payload = {
+        "jsonrpc": "2.0",
+        "method": "tools/list",
+        "params": {},
+        "id": 1,
+    }
+
+    # Try different common MCP endpoints
+    endpoints_to_try = [
+        "/",           # Standard MCP root endpoint
+        "/mcp",        # Some servers use /mcp prefix
+        "/tools",      # Some servers use /tools prefix
+        "/api",        # Some servers use /api prefix
+    ]
+
+    last_error = None
+
+    for endpoint in endpoints_to_try:
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    f"{url}{endpoint}",
+                    headers=headers,
+                    json=json_payload,
+                ) as resp:
+                    if resp.status == 200:
+                        # Validate JSON-RPC response structure
+                        data = await resp.json()
+                        if "result" in data and "tools" in data["result"]:
+                            return {"title": "External MCP Server"}
+                        elif "error" in data:
+                            # Server responded but with an error - still means it's an MCP server
+                            return {"title": "External MCP Server"}
+                        else:
+                            # Unexpected response format, try next endpoint
+                            continue
+                    elif resp.status == 404:
+                        # 404 means endpoint doesn't exist, try next one
+                        continue
+                    else:
+                        # Other error status, try next endpoint
+                        continue
+        except aiohttp.ClientError as err:
+            last_error = err
+            continue
+
+    # If we get here, none of the endpoints worked
+    if last_error:
+        raise CannotConnect(f"Failed to connect to external MCP server: {last_error}") from last_error
+    else:
+        raise CannotConnect("External MCP server did not respond to any known MCP endpoints")
 
 
 class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
