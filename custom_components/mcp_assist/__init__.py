@@ -21,10 +21,16 @@ from .const import (
     CONF_ALLOWED_IPS,
     CONF_SEARCH_PROVIDER,
     CONF_ENABLE_GAP_FILLING,
+    CONF_USE_EXTERNAL_MCP_SERVER,
+    CONF_MCP_SERVER_URL,
+    CONF_MCP_SERVER_AUTH_TOKEN,
     DEFAULT_ENABLE_CUSTOM_TOOLS,
     DEFAULT_BRAVE_API_KEY,
     DEFAULT_ALLOWED_IPS,
     DEFAULT_SEARCH_PROVIDER,
+    DEFAULT_USE_EXTERNAL_MCP_SERVER,
+    DEFAULT_MCP_SERVER_URL,
+    DEFAULT_MCP_SERVER_AUTH_TOKEN,
     DEFAULT_ENABLE_GAP_FILLING,
 )
 from .mcp_server import MCPServer
@@ -184,15 +190,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Use lock to prevent race condition when multiple profiles load simultaneously
         async with hass.data[DOMAIN]["server_init_lock"]:
             # Handle shared MCP server/index manager initialization
+            system_entry = get_system_entry(hass)
+            mcp_port = system_entry.data.get(CONF_MCP_PORT, DEFAULT_MCP_PORT)
+            use_external_mcp_server = system_entry.options.get(
+                CONF_USE_EXTERNAL_MCP_SERVER,
+                system_entry.data.get(CONF_USE_EXTERNAL_MCP_SERVER, DEFAULT_USE_EXTERNAL_MCP_SERVER),
+            )
+
             if "mcp_refcount" not in hass.data[DOMAIN]:
                 # First entry - create shared MCP settings and index manager
-                # Read MCP port and external MCP settings from system entry
-                system_entry = get_system_entry(hass)
-                mcp_port = system_entry.data.get(CONF_MCP_PORT, DEFAULT_MCP_PORT)
-                use_external_mcp_server = system_entry.options.get(
-                    CONF_USE_EXTERNAL_MCP_SERVER,
-                    system_entry.data.get(CONF_USE_EXTERNAL_MCP_SERVER, DEFAULT_USE_EXTERNAL_MCP_SERVER),
-                )
 
                 _LOGGER.info(
                     "Creating shared settings on port %d (from system entry)", mcp_port
@@ -232,7 +238,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # Reuse existing shared MCP settings
                 mcp_port = hass.data[DOMAIN]["mcp_port"]
                 _LOGGER.info("Reusing existing shared MCP settings on port %d", mcp_port)
-
+                if use_external_mcp_server and "shared_mcp_server" in hass.data[DOMAIN]:
+                    _LOGGER.info(
+                        "External MCP server mode enabled. Stopping local MCP server."
+                    )
+                    await hass.data[DOMAIN]["shared_mcp_server"].stop()
+                    hass.data[DOMAIN].pop("shared_mcp_server", None)
+                elif not use_external_mcp_server and "shared_mcp_server" not in hass.data[DOMAIN]:
+                    _LOGGER.info(
+                        "Local MCP server is not running; starting it now because external MCP server mode is disabled."
+                    )
+                    mcp_server = MCPServer(hass, mcp_port, entry)
+                    try:
+                        await mcp_server.start()
+                    except OSError as e:
+                        if "Address already in use" in str(e):
+                            _LOGGER.error(
+                                "Port %d is already in use. Either change CONF_MCP_PORT in your "
+                                "configuration or stop the service using port %d.",
+                                mcp_port, mcp_port
+                            )
+                            raise ConfigEntryNotReady(f"Port {mcp_port} already in use") from e
+                        raise
+                    hass.data[DOMAIN]["shared_mcp_server"] = mcp_server
             # Increment reference count
             hass.data[DOMAIN]["mcp_refcount"] += 1
             _LOGGER.debug("MCP server refcount: %d", hass.data[DOMAIN]["mcp_refcount"])
