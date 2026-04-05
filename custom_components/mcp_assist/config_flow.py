@@ -421,25 +421,32 @@ async def validate_external_mcp_server_connection(
     last_error = None
 
     for endpoint in endpoints_to_try:
-        _LOGGER.debug(f"Trying MCP endpoint: {url}{endpoint}")
+        validated_url = f"{url}{endpoint}"
+        _LOGGER.debug(f"Trying MCP endpoint: {validated_url}")
         try:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
-                    f"{url}{endpoint}",
+                    validated_url,
                     headers=headers,
                     json=json_payload,
                 ) as resp:
-                    _LOGGER.debug(f"MCP endpoint {url}{endpoint} returned status {resp.status}")
+                    _LOGGER.debug(f"MCP endpoint {validated_url} returned status {resp.status}")
                     if resp.status == 200:
                         # Validate JSON-RPC response structure
                         data = await resp.json()
                         _LOGGER.debug(f"MCP response: {data}")
                         if "result" in data and "tools" in data["result"]:
-                            return {"title": "External MCP Server"}
+                            return {
+                                "title": "External MCP Server",
+                                "mcp_server_url": validated_url,
+                            }
                         elif "error" in data:
                             # Server responded but with an error - still means it's an MCP server
-                            return {"title": "External MCP Server"}
+                            return {
+                                "title": "External MCP Server",
+                                "mcp_server_url": validated_url,
+                            }
                         else:
                             # Unexpected response format, try next endpoint
                             continue
@@ -450,7 +457,7 @@ async def validate_external_mcp_server_connection(
                         # Other error status, try next endpoint
                         continue
         except aiohttp.ClientError as err:
-            _LOGGER.debug(f"MCP endpoint {url}{endpoint} failed with error: {err}")
+            _LOGGER.debug(f"MCP endpoint {validated_url} failed with error: {err}")
             last_error = err
             continue
 
@@ -987,11 +994,13 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         errors[CONF_MCP_SERVER_URL] = "invalid_mcp_server_url"
                     else:
                         try:
-                            await validate_external_mcp_server_connection(
+                            validation_result = await validate_external_mcp_server_connection(
                                 self.hass,
                                 mcp_server_url,
                                 (user_input.get(CONF_MCP_SERVER_AUTH_TOKEN) or "").strip(),
                             )
+                            if validation_result.get("mcp_server_url"):
+                                user_input[CONF_MCP_SERVER_URL] = validation_result["mcp_server_url"]
                         except CannotConnect as err:
                             _LOGGER.error("External MCP server validation failed: %s", err)
                             errors["base"] = "cannot_connect"

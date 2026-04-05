@@ -285,9 +285,13 @@ class MCPAssistConversationEntity(ConversationEntity):
 
     def _get_mcp_headers(self) -> Dict[str, str]:
         """Get headers used for MCP tool calls."""
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
         if self.mcp_auth_token:
-            return {"Authorization": f"Bearer {self.mcp_auth_token}"}
-        return {}
+            headers["Authorization"] = f"Bearer {self.mcp_auth_token}"
+        return headers
 
     @property
     def debug_mode(self) -> bool:
@@ -1076,7 +1080,7 @@ class MCPAssistConversationEntity(ConversationEntity):
             timeout = aiohttp.ClientTimeout(total=5)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
-                    f"{mcp_url}/",
+                    mcp_url,
                     headers=self._get_mcp_headers(),
                     json={
                         "jsonrpc": "2.0",
@@ -1146,7 +1150,7 @@ class MCPAssistConversationEntity(ConversationEntity):
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
-                    f"{mcp_url}/",
+                    mcp_url,
                     headers=self._get_mcp_headers(),
                     json=payload,
                 ) as response:
