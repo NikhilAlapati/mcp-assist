@@ -1775,71 +1775,196 @@ class MCPAssistConversationEntity(ConversationEntity):
                         if self.debug_mode:
                             _LOGGER.debug("📖 Starting to read stream...")
 
-                        async for line in response.content:
-                            if not line:
+                        stream_buffer = ""
+                        async for chunk in response.content:
+                            if not chunk:
                                 continue
 
-                            line_str = line.decode("utf-8").strip()
+                            stream_buffer += chunk.decode("utf-8")
+                            while "\n" in stream_buffer:
+                                line_str, stream_buffer = stream_buffer.split("\n", 1)
+                                line_str = line_str.strip()
+                                if not line_str:
+                                    continue
 
+                                try:
+                                    if self.server_type == SERVER_TYPE_OLLAMA:
+                                        # Ollama: Each line is complete JSON
+                                        data = json.loads(line_str)
+
+                                        # Check for completion
+                                        if data.get("done"):
+                                            break
+
+                                        # Extract message
+                                        message = data.get("message", {})
+                                        delta = {}
+
+                                        if "content" in message and message["content"]:
+                                            delta["content"] = message["content"]
+
+                                        if "tool_calls" in message:
+                                            delta["tool_calls"] = message["tool_calls"]
+
+                                    else:
+                                        # OpenAI: SSE format with "data: " prefix
+                                        if not line_str.startswith("data: "):
+                                            continue
+                                        if line_str == "data: [DONE]":
+                                            break
+
+                                        data = json.loads(line_str[6:])
+                                        choice = data["choices"][0]
+                                        delta = choice.get("delta", {})
+
+                                        # Capture thought_signature from tool_calls (it's inside the first tool_call, not at choice/delta level)
+                                        if (
+                                            "tool_calls" in delta
+                                            and current_thought_signature is None
+                                        ):
+                                            for tc_delta in delta["tool_calls"]:
+                                                if "extra_content" in tc_delta:
+                                                    google_data = tc_delta.get(
+                                                        "extra_content", {}
+                                                    ).get("google", {})
+                                                    if "thought_signature" in google_data:
+                                                        current_thought_signature = (
+                                                            google_data["thought_signature"]
+                                                        )
+                                                        _LOGGER.info(
+                                                            f"🧠 Captured thought_signature: {current_thought_signature[:50]}..."
+                                                        )
+                                                        break  # Only in first tool_call
+
+                                    # Handle streamed content
+                                    if "content" in delta and delta["content"]:
+                                        chunk_text = delta["content"]
+                                        response_text += chunk_text
+                                        sentence_buffer += chunk_text
+
+                                        # Trigger TTS on complete sentence
+                                        if any(
+                                            sentence_buffer.endswith(p)
+                                            for p in [". ", "! ", "? ", ".\n", "!\n", "?\n"]
+                                        ):
+                                            await self._trigger_tts(sentence_buffer.strip())
+                                            sentence_buffer = ""
+
+                                    # Handle streamed tool calls
+                                    if "tool_calls" in delta:
+                                        has_tool_calls = True
+                                        for tc in delta["tool_calls"]:
+                                            idx = tc.get("index", 0)
+
+                                            # Initialize tool call if new
+                                            if idx >= len(current_tool_calls):
+                                                current_tool_calls.append({})
+
+                                            if "id" in tc:
+                                                tool_ids[idx] = tc["id"]
+                                                current_tool_calls[idx]["id"] = tc["id"]
+                                                # Add the required type field
+                                                current_tool_calls[idx]["type"] = "function"
+
+                                            if "function" in tc:
+                                                func = tc["function"]
+                                                if "name" in func:
+                                                    tool_names[idx] = func["name"]
+                                                    if (
+                                                        "function"
+                                                        not in current_tool_calls[idx]
+                                                    ):
+                                                        current_tool_calls[idx][
+                                                            "function"
+                                                        ] = {}
+                                                    current_tool_calls[idx]["function"][
+                                                        "name"
+                                                    ] = func["name"]
+                                                    _LOGGER.info(
+                                                        f"🔧 Tool streaming: {func['name']}"
+                                                    )
+
+                                                if "arguments" in func:
+                                                    if idx not in tool_arg_buffers:
+                                                        tool_arg_buffers[idx] = ""
+                                                    tool_arg_buffers[idx] += func[
+                                                        "arguments"
+                                                    ]
+
+                                                    # Try to parse arguments
+                                                    try:
+                                                        args_json = json.loads(
+                                                            tool_arg_buffers[idx]
+                                                        )
+                                                        # Valid JSON - save it
+                                                        if (
+                                                            "function"
+                                                            not in current_tool_calls[idx]
+                                                        ):
+                                                            current_tool_calls[idx][
+                                                                "function"
+                                                            ] = {}
+                                                        current_tool_calls[idx]["function"][
+                                                            "arguments"
+                                                        ] = tool_arg_buffers[idx]
+
+                                                        # Quick feedback for tool execution
+                                                        tool_name = tool_names.get(idx)
+                                                        if (
+                                                            tool_name
+                                                            and idx not in completed_tools
+                                                        ):
+                                                            completed_tools.add(idx)
+                                                            if (
+                                                                tool_name
+                                                                == "discover_entities"
+                                                            ):
+                                                                await self._trigger_tts(
+                                                                    "Looking for devices..."
+                                                                )
+                                                            elif (
+                                                                tool_name
+                                                                == "perform_action"
+                                                            ):
+                                                                await self._trigger_tts(
+                                                                    "Controlling the device..."
+                                                                )
+
+                                                    except json.JSONDecodeError:
+                                                        # Still accumulating arguments
+                                                        pass
+
+                                except Exception as e:
+                                    _LOGGER.debug(f"Stream parsing: {e}")
+
+                        # Process any remaining partial line at end of stream
+                        if stream_buffer.strip():
+                            line_str = stream_buffer.strip()
                             try:
                                 if self.server_type == SERVER_TYPE_OLLAMA:
-                                    # Ollama: Each line is complete JSON
-                                    if not line_str:
-                                        continue
-
                                     data = json.loads(line_str)
-
-                                    # Check for completion
                                     if data.get("done"):
-                                        break
+                                        pass
+                                    else:
+                                        message = data.get("message", {})
+                                        delta = {}
 
-                                    # Extract message
-                                    message = data.get("message", {})
-                                    delta = {}
-
-                                    if "content" in message and message["content"]:
-                                        delta["content"] = message["content"]
-
-                                    if "tool_calls" in message:
-                                        delta["tool_calls"] = message["tool_calls"]
-
+                                        if "content" in message and message["content"]:
+                                            delta["content"] = message["content"]
+                                        if "tool_calls" in message:
+                                            delta["tool_calls"] = message["tool_calls"]
                                 else:
-                                    # OpenAI: SSE format with "data: " prefix
-                                    if not line_str.startswith("data: "):
-                                        continue
-                                    if line_str == "data: [DONE]":
-                                        break
+                                    if line_str.startswith("data: ") and line_str != "data: [DONE]":
+                                        data = json.loads(line_str[6:])
+                                        choice = data["choices"][0]
+                                        delta = choice.get("delta", {})
+                                    else:
+                                        delta = {}
 
-                                    data = json.loads(line_str[6:])
-                                    choice = data["choices"][0]
-                                    delta = choice.get("delta", {})
-
-                                    # Capture thought_signature from tool_calls (it's inside the first tool_call, not at choice/delta level)
-                                    if (
-                                        "tool_calls" in delta
-                                        and current_thought_signature is None
-                                    ):
-                                        for tc_delta in delta["tool_calls"]:
-                                            if "extra_content" in tc_delta:
-                                                google_data = tc_delta.get(
-                                                    "extra_content", {}
-                                                ).get("google", {})
-                                                if "thought_signature" in google_data:
-                                                    current_thought_signature = (
-                                                        google_data["thought_signature"]
-                                                    )
-                                                    _LOGGER.info(
-                                                        f"🧠 Captured thought_signature: {current_thought_signature[:50]}..."
-                                                    )
-                                                    break  # Only in first tool_call
-
-                                # Handle streamed content
                                 if "content" in delta and delta["content"]:
-                                    chunk = delta["content"]
-                                    response_text += chunk
-                                    sentence_buffer += chunk
-
-                                    # Trigger TTS on complete sentence
+                                    chunk_text = delta["content"]
+                                    response_text += chunk_text
+                                    sentence_buffer += chunk_text
                                     if any(
                                         sentence_buffer.endswith(p)
                                         for p in [". ", "! ", "? ", ".\n", "!\n", "?\n"]
@@ -1847,22 +1972,16 @@ class MCPAssistConversationEntity(ConversationEntity):
                                         await self._trigger_tts(sentence_buffer.strip())
                                         sentence_buffer = ""
 
-                                # Handle streamed tool calls
                                 if "tool_calls" in delta:
                                     has_tool_calls = True
                                     for tc in delta["tool_calls"]:
                                         idx = tc.get("index", 0)
-
-                                        # Initialize tool call if new
                                         if idx >= len(current_tool_calls):
                                             current_tool_calls.append({})
-
                                         if "id" in tc:
                                             tool_ids[idx] = tc["id"]
                                             current_tool_calls[idx]["id"] = tc["id"]
-                                            # Add the required type field
                                             current_tool_calls[idx]["type"] = "function"
-
                                         if "function" in tc:
                                             func = tc["function"]
                                             if "name" in func:
@@ -1877,23 +1996,16 @@ class MCPAssistConversationEntity(ConversationEntity):
                                                 current_tool_calls[idx]["function"][
                                                     "name"
                                                 ] = func["name"]
-                                                _LOGGER.info(
-                                                    f"🔧 Tool streaming: {func['name']}"
-                                                )
-
                                             if "arguments" in func:
                                                 if idx not in tool_arg_buffers:
                                                     tool_arg_buffers[idx] = ""
                                                 tool_arg_buffers[idx] += func[
                                                     "arguments"
                                                 ]
-
-                                                # Try to parse arguments
                                                 try:
                                                     args_json = json.loads(
                                                         tool_arg_buffers[idx]
                                                     )
-                                                    # Valid JSON - save it
                                                     if (
                                                         "function"
                                                         not in current_tool_calls[idx]
@@ -1904,35 +2016,10 @@ class MCPAssistConversationEntity(ConversationEntity):
                                                     current_tool_calls[idx]["function"][
                                                         "arguments"
                                                     ] = tool_arg_buffers[idx]
-
-                                                    # Quick feedback for tool execution
-                                                    tool_name = tool_names.get(idx)
-                                                    if (
-                                                        tool_name
-                                                        and idx not in completed_tools
-                                                    ):
-                                                        completed_tools.add(idx)
-                                                        if (
-                                                            tool_name
-                                                            == "discover_entities"
-                                                        ):
-                                                            await self._trigger_tts(
-                                                                "Looking for devices..."
-                                                            )
-                                                        elif (
-                                                            tool_name
-                                                            == "perform_action"
-                                                        ):
-                                                            await self._trigger_tts(
-                                                                "Controlling the device..."
-                                                            )
-
                                                 except json.JSONDecodeError:
-                                                    # Still accumulating arguments
                                                     pass
-
                             except Exception as e:
-                                _LOGGER.debug(f"Stream parsing: {e}")
+                                _LOGGER.debug(f"Stream parsing leftover: {e}")
 
             except Exception as stream_error:
                 _LOGGER.error(
