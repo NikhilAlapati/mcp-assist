@@ -872,27 +872,40 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_mcp_server(self, user_input=None) -> FlowResult:
-        """Handle step 5 - shared MCP server settings (first profile only)."""
+        """Handle step 5 - select shared MCP server mode."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate MCP port
-            mcp_port = user_input.get(CONF_MCP_PORT, DEFAULT_MCP_PORT)
-            if not 1024 <= mcp_port <= 65535:
-                errors[CONF_MCP_PORT] = "invalid_port"
-
-            # Validate allowed IPs
-            allowed_ips_str = user_input.get(CONF_ALLOWED_IPS, DEFAULT_ALLOWED_IPS)
-            is_valid, error_msg = validate_allowed_ips(allowed_ips_str)
-            if not is_valid:
-                errors[CONF_ALLOWED_IPS] = "invalid_ip"
-                _LOGGER.warning("Invalid allowed IPs: %s", error_msg)
-
-            # Validate external MCP server settings when enabled
-            use_external_server = user_input.get(
+            self.use_external_mcp_server = user_input.get(
                 CONF_USE_EXTERNAL_MCP_SERVER, DEFAULT_USE_EXTERNAL_MCP_SERVER
             )
-            if use_external_server:
+            return await self.async_step_mcp_server_settings()
+
+        mcp_choice_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_USE_EXTERNAL_MCP_SERVER,
+                    default=DEFAULT_USE_EXTERNAL_MCP_SERVER,
+                ): bool,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="mcp_server",
+            data_schema=mcp_choice_schema,
+            errors=errors,
+            description_placeholders={
+                "info": "Choose whether to use an existing MCP server or create a new shared MCP server for this integration."
+            },
+        )
+
+    async def async_step_mcp_server_settings(self, user_input=None) -> FlowResult:
+        """Handle step 6 - shared MCP server settings for selected mode."""
+        errors: dict[str, str] = {}
+        external_mode = getattr(self, "use_external_mcp_server", DEFAULT_USE_EXTERNAL_MCP_SERVER)
+
+        if user_input is not None:
+            if external_mode:
                 mcp_server_url = (user_input.get(CONF_MCP_SERVER_URL) or "").strip()
                 if not mcp_server_url:
                     errors[CONF_MCP_SERVER_URL] = "invalid_mcp_server_url"
@@ -900,31 +913,45 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     parsed_url = urlparse(mcp_server_url)
                     if parsed_url.scheme.lower() not in ["http", "https"] or not parsed_url.netloc:
                         errors[CONF_MCP_SERVER_URL] = "invalid_mcp_server_url"
+            else:
+                mcp_port = user_input.get(CONF_MCP_PORT, DEFAULT_MCP_PORT)
+                if not 1024 <= mcp_port <= 65535:
+                    errors[CONF_MCP_PORT] = "invalid_port"
+
+                allowed_ips_str = user_input.get(CONF_ALLOWED_IPS, DEFAULT_ALLOWED_IPS)
+                is_valid, error_msg = validate_allowed_ips(allowed_ips_str)
+                if not is_valid:
+                    errors[CONF_ALLOWED_IPS] = "invalid_ip"
+                    _LOGGER.warning("Invalid allowed IPs: %s", error_msg)
 
             if not errors:
-                # Create/update system entry with shared settings
                 from . import get_system_entry
 
                 system_entry = get_system_entry(self.hass)
+                system_data = {
+                    **user_input,
+                    CONF_USE_EXTERNAL_MCP_SERVER: external_mode,
+                }
+
+                if not external_mode:
+                    system_data[CONF_MCP_SERVER_URL] = DEFAULT_MCP_SERVER_URL
+                    system_data[CONF_MCP_SERVER_AUTH_TOKEN] = DEFAULT_MCP_SERVER_AUTH_TOKEN
 
                 if not system_entry:
-                    # Create system entry with shared settings
                     await self.hass.config_entries.flow.async_init(
-                        DOMAIN, context={"source": "system"}, data=user_input
+                        DOMAIN, context={"source": "system"}, data=system_data
                     )
                     _LOGGER.info(
                         "Created system entry with shared MCP settings from initial setup"
                     )
                 else:
-                    # Update existing system entry
                     self.hass.config_entries.async_update_entry(
-                        system_entry, data={**system_entry.data, **user_input}
+                        system_entry, data={**system_entry.data, **system_data}
                     )
                     _LOGGER.info(
                         "Updated existing system entry with shared MCP settings"
                     )
 
-                # Combine data from steps 1-4 (profile settings only, no shared settings)
                 combined_data = {
                     **self.step1_data,
                     **self.step2_data,
@@ -932,7 +959,6 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     **self.step4_data,
                 }
 
-                # Create profile config entry
                 profile_name = combined_data[CONF_PROFILE_NAME]
                 server_type = combined_data.get(CONF_SERVER_TYPE, DEFAULT_SERVER_TYPE)
 
@@ -960,47 +986,51 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=combined_data,
                 )
 
-        # Build schema for MCP server settings
-        mcp_schema = vol.Schema(
-            {
-                vol.Required(CONF_USE_EXTERNAL_MCP_SERVER, default=DEFAULT_USE_EXTERNAL_MCP_SERVER): bool,
-                vol.Optional(CONF_MCP_SERVER_URL, default=DEFAULT_MCP_SERVER_URL): str,
-                vol.Optional(
-                    CONF_MCP_SERVER_AUTH_TOKEN,
-                    default=DEFAULT_MCP_SERVER_AUTH_TOKEN,
-                ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
-                vol.Required(CONF_MCP_PORT, default=DEFAULT_MCP_PORT): vol.Coerce(int),
-                vol.Required(
-                    CONF_SEARCH_PROVIDER, default=DEFAULT_SEARCH_PROVIDER
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            {"value": "none", "label": "Disabled"},
-                            {"value": "duckduckgo", "label": "DuckDuckGo"},
-                            {
-                                "value": "brave",
-                                "label": "Brave Search (requires API key)",
-                            },
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Optional(
-                    CONF_BRAVE_API_KEY, default=DEFAULT_BRAVE_API_KEY
-                ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
-                vol.Optional(CONF_ALLOWED_IPS, default=DEFAULT_ALLOWED_IPS): str,
-                vol.Optional(
-                    CONF_ENABLE_GAP_FILLING, default=DEFAULT_ENABLE_GAP_FILLING
-                ): bool,
-                vol.Optional(
-                    CONF_MAX_ENTITIES_PER_DISCOVERY,
-                    default=DEFAULT_MAX_ENTITIES_PER_DISCOVERY,
-                ): vol.All(vol.Coerce(int), vol.Range(min=20, max=500)),
-            }
-        )
+        if external_mode:
+            mcp_schema = vol.Schema(
+                {
+                    vol.Required(CONF_MCP_SERVER_URL, default=DEFAULT_MCP_SERVER_URL): str,
+                    vol.Optional(
+                        CONF_MCP_SERVER_AUTH_TOKEN,
+                        default=DEFAULT_MCP_SERVER_AUTH_TOKEN,
+                    ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                }
+            )
+        else:
+            mcp_schema = vol.Schema(
+                {
+                    vol.Required(CONF_MCP_PORT, default=DEFAULT_MCP_PORT): vol.Coerce(int),
+                    vol.Required(
+                        CONF_SEARCH_PROVIDER, default=DEFAULT_SEARCH_PROVIDER
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                {"value": "none", "label": "Disabled"},
+                                {"value": "duckduckgo", "label": "DuckDuckGo"},
+                                {
+                                    "value": "brave",
+                                    "label": "Brave Search (requires API key)",
+                                },
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_BRAVE_API_KEY, default=DEFAULT_BRAVE_API_KEY
+                    ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                    vol.Optional(CONF_ALLOWED_IPS, default=DEFAULT_ALLOWED_IPS): str,
+                    vol.Optional(
+                        CONF_ENABLE_GAP_FILLING, default=DEFAULT_ENABLE_GAP_FILLING
+                    ): bool,
+                    vol.Optional(
+                        CONF_MAX_ENTITIES_PER_DISCOVERY,
+                        default=DEFAULT_MAX_ENTITIES_PER_DISCOVERY,
+                    ): vol.All(vol.Coerce(int), vol.Range(min=20, max=500)),
+                }
+            )
 
         return self.async_show_form(
-            step_id="mcp_server",
+            step_id="mcp_server_settings",
             data_schema=mcp_schema,
             errors=errors,
             description_placeholders={
