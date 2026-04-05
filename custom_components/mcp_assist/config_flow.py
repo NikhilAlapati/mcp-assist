@@ -394,7 +394,10 @@ async def validate_external_mcp_server_connection(
 ) -> dict[str, Any]:
     """Validate an external MCP server connection."""
     url = url.rstrip("/")
-    headers: dict[str, str] = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
@@ -408,14 +411,17 @@ async def validate_external_mcp_server_connection(
     # Try different common MCP endpoints
     endpoints_to_try = [
         "/",           # Standard MCP root endpoint
+        "/api/mcp",    # Home Assistant MCP endpoint
         "/mcp",        # Some servers use /mcp prefix
         "/tools",      # Some servers use /tools prefix
         "/api",        # Some servers use /api prefix
+        "/jsonrpc",    # Some servers use /jsonrpc
     ]
 
     last_error = None
 
     for endpoint in endpoints_to_try:
+        _LOGGER.debug(f"Trying MCP endpoint: {url}{endpoint}")
         try:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -424,9 +430,11 @@ async def validate_external_mcp_server_connection(
                     headers=headers,
                     json=json_payload,
                 ) as resp:
+                    _LOGGER.debug(f"MCP endpoint {url}{endpoint} returned status {resp.status}")
                     if resp.status == 200:
                         # Validate JSON-RPC response structure
                         data = await resp.json()
+                        _LOGGER.debug(f"MCP response: {data}")
                         if "result" in data and "tools" in data["result"]:
                             return {"title": "External MCP Server"}
                         elif "error" in data:
@@ -442,6 +450,7 @@ async def validate_external_mcp_server_connection(
                         # Other error status, try next endpoint
                         continue
         except aiohttp.ClientError as err:
+            _LOGGER.debug(f"MCP endpoint {url}{endpoint} failed with error: {err}")
             last_error = err
             continue
 
