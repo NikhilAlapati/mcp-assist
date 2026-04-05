@@ -394,17 +394,32 @@ async def validate_external_mcp_server_connection(
 ) -> dict[str, Any]:
     """Validate an external MCP server connection."""
     url = url.rstrip("/")
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = {"Content-Type": "application/json"}
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
     try:
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(f"{url}/health", headers=headers) as resp:
+            async with session.post(
+                f"{url}/",
+                headers=headers,
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "tools/list",
+                    "params": {},
+                    "id": 1,
+                },
+            ) as resp:
                 if resp.status != 200:
                     raise CannotConnect(
-                        f"External MCP server did not respond to health check (status {resp.status})"
+                        f"External MCP server did not respond to tools/list (status {resp.status})"
+                    )
+                # Validate JSON-RPC response structure
+                data = await resp.json()
+                if "result" not in data or "tools" not in data["result"]:
+                    raise CannotConnect(
+                        "External MCP server returned invalid tools/list response"
                     )
                 return {"title": "External MCP Server"}
     except aiohttp.ClientError as err:
