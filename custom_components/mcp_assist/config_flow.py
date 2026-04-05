@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 import voluptuous as vol
@@ -24,6 +25,7 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
 )
 
+from . import get_system_entry
 from .localization import get_language_instruction, get_follow_up_phrases, get_end_words
 
 from .const import (
@@ -50,6 +52,9 @@ from .const import (
     CONF_BRAVE_API_KEY,
     CONF_ALLOWED_IPS,
     CONF_SEARCH_PROVIDER,
+    CONF_USE_EXTERNAL_MCP_SERVER,
+    CONF_MCP_SERVER_URL,
+    CONF_MCP_SERVER_AUTH_TOKEN,
     CONF_ENABLE_GAP_FILLING,
     CONF_MAX_ENTITIES_PER_DISCOVERY,
     DEFAULT_MAX_ENTITIES_PER_DISCOVERY,
@@ -90,6 +95,9 @@ from .const import (
     DEFAULT_BRAVE_API_KEY,
     DEFAULT_ALLOWED_IPS,
     DEFAULT_SEARCH_PROVIDER,
+    DEFAULT_USE_EXTERNAL_MCP_SERVER,
+    DEFAULT_MCP_SERVER_URL,
+    DEFAULT_MCP_SERVER_AUTH_TOKEN,
     DEFAULT_ENABLE_GAP_FILLING,
     DEFAULT_OLLAMA_KEEP_ALIVE,
     DEFAULT_OLLAMA_NUM_CTX,
@@ -673,10 +681,8 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.warning("Invalid allowed IPs: %s", error_msg)
 
             if not errors:
-                # Check if this is the first profile (MCP server doesn't exist yet)
-                is_first_profile = "shared_mcp_server" not in self.hass.data.get(
-                    DOMAIN, {}
-                )
+                # Check if this is the first profile (shared system settings don't exist yet)
+                is_first_profile = get_system_entry(self.hass) is None
 
                 if is_first_profile:
                     # First profile - store step 4 data and proceed to MCP server config
@@ -687,31 +693,48 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # Get MCP settings from shared server
                     mcp_port = self.hass.data[DOMAIN].get("mcp_port", DEFAULT_MCP_PORT)
 
-                    # Get search provider from any existing entry (they all share it)
-                    # Find first entry to copy shared settings from
-                    existing_entry = None
-                    for entry in self.hass.config_entries.async_entries(DOMAIN):
-                        existing_entry = entry
-                        break
-
-                    # Copy shared settings from existing entry
+                    # Get shared settings from system entry
+                    system_entry = get_system_entry(self.hass)
                     shared_settings = {}
-                    if existing_entry:
+                    if system_entry:
                         shared_settings = {
-                            CONF_MCP_PORT: existing_entry.data.get(
-                                CONF_MCP_PORT, mcp_port
+                            CONF_MCP_PORT: system_entry.options.get(
+                                CONF_MCP_PORT,
+                                system_entry.data.get(CONF_MCP_PORT, mcp_port),
                             ),
-                            CONF_SEARCH_PROVIDER: existing_entry.data.get(
-                                CONF_SEARCH_PROVIDER, DEFAULT_SEARCH_PROVIDER
+                            CONF_SEARCH_PROVIDER: system_entry.options.get(
+                                CONF_SEARCH_PROVIDER,
+                                system_entry.data.get(CONF_SEARCH_PROVIDER, DEFAULT_SEARCH_PROVIDER),
                             ),
-                            CONF_BRAVE_API_KEY: existing_entry.data.get(
-                                CONF_BRAVE_API_KEY, DEFAULT_BRAVE_API_KEY
+                            CONF_BRAVE_API_KEY: system_entry.options.get(
+                                CONF_BRAVE_API_KEY,
+                                system_entry.data.get(CONF_BRAVE_API_KEY, DEFAULT_BRAVE_API_KEY),
                             ),
-                            CONF_ALLOWED_IPS: existing_entry.data.get(
-                                CONF_ALLOWED_IPS, DEFAULT_ALLOWED_IPS
+                            CONF_ALLOWED_IPS: system_entry.options.get(
+                                CONF_ALLOWED_IPS,
+                                system_entry.data.get(CONF_ALLOWED_IPS, DEFAULT_ALLOWED_IPS),
                             ),
-                            CONF_ENABLE_GAP_FILLING: existing_entry.data.get(
-                                CONF_ENABLE_GAP_FILLING, DEFAULT_ENABLE_GAP_FILLING
+                            CONF_ENABLE_GAP_FILLING: system_entry.options.get(
+                                CONF_ENABLE_GAP_FILLING,
+                                system_entry.data.get(CONF_ENABLE_GAP_FILLING, DEFAULT_ENABLE_GAP_FILLING),
+                            ),
+                            CONF_USE_EXTERNAL_MCP_SERVER: system_entry.options.get(
+                                CONF_USE_EXTERNAL_MCP_SERVER,
+                                system_entry.data.get(
+                                    CONF_USE_EXTERNAL_MCP_SERVER,
+                                    DEFAULT_USE_EXTERNAL_MCP_SERVER,
+                                ),
+                            ),
+                            CONF_MCP_SERVER_URL: system_entry.options.get(
+                                CONF_MCP_SERVER_URL,
+                                system_entry.data.get(CONF_MCP_SERVER_URL, DEFAULT_MCP_SERVER_URL),
+                            ),
+                            CONF_MCP_SERVER_AUTH_TOKEN: system_entry.options.get(
+                                CONF_MCP_SERVER_AUTH_TOKEN,
+                                system_entry.data.get(
+                                    CONF_MCP_SERVER_AUTH_TOKEN,
+                                    DEFAULT_MCP_SERVER_AUTH_TOKEN,
+                                ),
                             ),
                         }
 
@@ -865,6 +888,19 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_ALLOWED_IPS] = "invalid_ip"
                 _LOGGER.warning("Invalid allowed IPs: %s", error_msg)
 
+            # Validate external MCP server settings when enabled
+            use_external_server = user_input.get(
+                CONF_USE_EXTERNAL_MCP_SERVER, DEFAULT_USE_EXTERNAL_MCP_SERVER
+            )
+            if use_external_server:
+                mcp_server_url = (user_input.get(CONF_MCP_SERVER_URL) or "").strip()
+                if not mcp_server_url:
+                    errors[CONF_MCP_SERVER_URL] = "invalid_mcp_server_url"
+                else:
+                    parsed_url = urlparse(mcp_server_url)
+                    if parsed_url.scheme.lower() not in ["http", "https"] or not parsed_url.netloc:
+                        errors[CONF_MCP_SERVER_URL] = "invalid_mcp_server_url"
+
             if not errors:
                 # Create/update system entry with shared settings
                 from . import get_system_entry
@@ -927,6 +963,12 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Build schema for MCP server settings
         mcp_schema = vol.Schema(
             {
+                vol.Required(CONF_USE_EXTERNAL_MCP_SERVER, default=DEFAULT_USE_EXTERNAL_MCP_SERVER): bool,
+                vol.Optional(CONF_MCP_SERVER_URL, default=DEFAULT_MCP_SERVER_URL): str,
+                vol.Optional(
+                    CONF_MCP_SERVER_AUTH_TOKEN,
+                    default=DEFAULT_MCP_SERVER_AUTH_TOKEN,
+                ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
                 vol.Required(CONF_MCP_PORT, default=DEFAULT_MCP_PORT): vol.Coerce(int),
                 vol.Required(
                     CONF_SEARCH_PROVIDER, default=DEFAULT_SEARCH_PROVIDER

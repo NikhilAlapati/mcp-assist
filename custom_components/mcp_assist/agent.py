@@ -53,6 +53,9 @@ from .const import (
     CONF_SEARCH_PROVIDER,
     CONF_BRAVE_API_KEY,
     CONF_ALLOWED_IPS,
+    CONF_USE_EXTERNAL_MCP_SERVER,
+    CONF_MCP_SERVER_URL,
+    CONF_MCP_SERVER_AUTH_TOKEN,
     CONF_ENABLE_GAP_FILLING,
     CONF_ENABLE_CUSTOM_TOOLS,
     CONF_FOLLOW_UP_PHRASES,
@@ -250,6 +253,41 @@ class MCPAssistConversationEntity(ConversationEntity):
     def mcp_port(self) -> int:
         """Get MCP port (shared setting)."""
         return self._get_shared_setting(CONF_MCP_PORT, DEFAULT_MCP_PORT)
+
+    @property
+    def use_external_mcp_server(self) -> bool:
+        """Return whether shared settings use an external MCP server."""
+        return self._get_shared_setting(
+            CONF_USE_EXTERNAL_MCP_SERVER, DEFAULT_USE_EXTERNAL_MCP_SERVER
+        )
+
+    @property
+    def mcp_server_url(self) -> str:
+        """Return configured external MCP server URL."""
+        return self._get_shared_setting(
+            CONF_MCP_SERVER_URL, DEFAULT_MCP_SERVER_URL
+        ).rstrip("/")
+
+    @property
+    def mcp_auth_token(self) -> str:
+        """Return configured MCP server bearer token."""
+        return self._get_shared_setting(
+            CONF_MCP_SERVER_AUTH_TOKEN, DEFAULT_MCP_SERVER_AUTH_TOKEN
+        )
+
+    @property
+    def mcp_url(self) -> str:
+        """Get the MCP URL used for tool calls."""
+        if self.use_external_mcp_server and self.mcp_server_url:
+            return self.mcp_server_url
+
+        return f"http://localhost:{self.mcp_port}"
+
+    def _get_mcp_headers(self) -> Dict[str, str]:
+        """Get headers used for MCP tool calls."""
+        if self.mcp_auth_token:
+            return {"Authorization": f"Bearer {self.mcp_auth_token}"}
+        return {}
 
     @property
     def debug_mode(self) -> bool:
@@ -1032,13 +1070,14 @@ class MCPAssistConversationEntity(ConversationEntity):
     async def _get_mcp_tools(self) -> Optional[List[Dict[str, Any]]]:
         """Fetch available tools from MCP server."""
         try:
-            mcp_url = f"http://localhost:{self.mcp_port}"
+            mcp_url = self.mcp_url
 
             # Get tools list from MCP server
             timeout = aiohttp.ClientTimeout(total=5)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     f"{mcp_url}/",
+                    headers=self._get_mcp_headers(),
                     json={
                         "jsonrpc": "2.0",
                         "method": "tools/list",
@@ -1091,7 +1130,7 @@ class MCPAssistConversationEntity(ConversationEntity):
         _LOGGER.info(f"🔧 Executing MCP tool: {tool_name} with args: {arguments}")
 
         try:
-            mcp_url = f"http://localhost:{self.mcp_port}"
+            mcp_url = self.mcp_url
 
             # Create JSON-RPC request for tool execution
             request_id = f"tool_{uuid.uuid4().hex[:8]}"
@@ -1106,7 +1145,11 @@ class MCPAssistConversationEntity(ConversationEntity):
 
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(f"{mcp_url}/", json=payload) as response:
+                async with session.post(
+                    f"{mcp_url}/",
+                    headers=self._get_mcp_headers(),
+                    json=payload,
+                ) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         _LOGGER.error(

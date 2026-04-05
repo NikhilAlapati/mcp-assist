@@ -21,6 +21,9 @@ CONF_API_KEY = "api_key"
 CONF_LMSTUDIO_URL = "lmstudio_url"
 CONF_MODEL_NAME = "model_name"
 CONF_MCP_PORT = "mcp_port"
+CONF_USE_EXTERNAL_MCP_SERVER = "use_external_mcp_server"
+CONF_MCP_SERVER_URL = "mcp_server_url"
+CONF_MCP_SERVER_AUTH_TOKEN = "mcp_server_auth_token"
 CONF_AUTO_START = "auto_start"
 CONF_SYSTEM_PROMPT = "system_prompt"
 CONF_TECHNICAL_PROMPT = "technical_prompt"
@@ -53,6 +56,9 @@ DEFAULT_MOLTBOT_URL = "http://localhost:18789"
 DEFAULT_VLLM_URL = "http://localhost:8000"
 DEFAULT_MCP_PORT = 8090
 DEFAULT_API_KEY = ""
+DEFAULT_USE_EXTERNAL_MCP_SERVER = False
+DEFAULT_MCP_SERVER_URL = ""
+DEFAULT_MCP_SERVER_AUTH_TOKEN = ""
 
 # Cloud provider base URLs
 OPENAI_BASE_URL = "https://api.openai.com"

@@ -50,6 +50,9 @@
         "title": "Shared MCP Server Settings",
         "description": "⚠️ These settings affect ALL profiles. Changes here will impact every MCP Assist conversation agent.",
         "data": {
+          "use_external_mcp_server": "Use Existing MCP Server",
+          "mcp_server_url": "MCP Server URL",
+          "mcp_server_auth_token": "MCP Server Bearer Token",
           "mcp_port": "MCP Server Port",
           "search_provider": "Web Search",
           "brave_api_key": "Brave Search API Key",
@@ -67,6 +70,7 @@
       "profile_name_required": "Profile name is required.",
       "invalid_json": "Invalid JSON format. Please check your MCP servers configuration.",
       "invalid_api_key": "Invalid API key. Please check and try again.",
+      "invalid_mcp_server_url": "Invalid MCP server URL. Use http:// or https://.",
       "auth_failed": "Authentication failed. Please verify your API key.",
       "unknown": "An unknown error occurred."
     },
@@ -105,6 +109,9 @@
         "title": "Shared MCP Server Settings",
         "description": "⚠️ These settings are shared across ALL profiles",
         "data": {
+          "use_external_mcp_server": "Use Existing MCP Server",
+          "mcp_server_url": "MCP Server URL",
+          "mcp_server_auth_token": "MCP Server Bearer Token",
           "mcp_port": "MCP Server Port",
           "search_provider": "Web Search",
           "brave_api_key": "Brave Search API Key",
