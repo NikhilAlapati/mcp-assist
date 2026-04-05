@@ -389,6 +389,28 @@ async def validate_lmstudio_connection(
     return {"title": f"LM Studio ({model_name})"}
 
 
+async def validate_external_mcp_server_connection(
+    hass: HomeAssistant, url: str, auth_token: str
+) -> dict[str, Any]:
+    """Validate an external MCP server connection."""
+    url = url.rstrip("/")
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{url}/health", headers=headers) as resp:
+                if resp.status != 200:
+                    raise CannotConnect(
+                        f"External MCP server did not respond to health check (status {resp.status})"
+                    )
+                return {"title": "External MCP Server"}
+    except aiohttp.ClientError as err:
+        raise CannotConnect(f"Failed to connect to external MCP server: {err}") from err
+
+
 class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for MCP Assist."""
 
@@ -913,6 +935,16 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     parsed_url = urlparse(mcp_server_url)
                     if parsed_url.scheme.lower() not in ["http", "https"] or not parsed_url.netloc:
                         errors[CONF_MCP_SERVER_URL] = "invalid_mcp_server_url"
+                    else:
+                        try:
+                            await validate_external_mcp_server_connection(
+                                self.hass,
+                                mcp_server_url,
+                                (user_input.get(CONF_MCP_SERVER_AUTH_TOKEN) or "").strip(),
+                            )
+                        except CannotConnect as err:
+                            _LOGGER.error("External MCP server validation failed: %s", err)
+                            errors["base"] = "cannot_connect"
             else:
                 mcp_port = user_input.get(CONF_MCP_PORT, DEFAULT_MCP_PORT)
                 if not 1024 <= mcp_port <= 65535:
