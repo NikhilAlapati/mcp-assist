@@ -109,6 +109,8 @@ from .const import (
     OPENAI_BASE_URL,
     GEMINI_BASE_URL,
     OPENROUTER_BASE_URL,
+    CONF_SEARXNG_URL,
+    DEFAULT_SEARXNG_URL, 
 )
 
 _LOGGER = logging.getLogger(__name__)
