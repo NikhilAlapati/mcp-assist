@@ -1,4 +1,4 @@
-"""Brave Search custom tool for ha-lmstudio-mcp."""
+"""SearXNG Search custom tool for ha-lmstudio-mcp."""
 import aiohttp
 import asyncio
 import logging
