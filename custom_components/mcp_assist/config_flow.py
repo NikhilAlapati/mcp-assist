@@ -1006,6 +1006,10 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 "value": "brave",
                                 "label": "Brave Search (requires API key)",
                             },
+                            {
+                                "value": "searxng",
+                                "label": "SearXNG Search Requires local search server setup",
+                            },
                         ],
                         mode=SelectSelectorMode.DROPDOWN,
                     )
@@ -1021,6 +1025,10 @@ class MCPAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_MAX_ENTITIES_PER_DISCOVERY,
                     default=DEFAULT_MAX_ENTITIES_PER_DISCOVERY,
                 ): vol.All(vol.Coerce(int), vol.Range(min=20, max=500)),
+                vol.Optional(
+                    CONF_SEARXNG_URL,
+                    default=DEFAULT_SEARXNG_URL
+                ): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
             }
         )
 

@@ -38,9 +38,17 @@ class CustomToolsLoader:
                 _LOGGER.debug("✅ DuckDuckGo Search tool initialized")
             except Exception as e:
                 _LOGGER.error(f"Failed to initialize DuckDuckGo Search tool: {e}")
+        elif search_provider == "searxng":
+            try:
+                from .searxng_search import SearXNGSearchTool
+                self.tools["search"] = SearXNGSearchTool(self.hass)
+                await self.tools["search"].initialize()
+                _LOGGER.debug("✅ SearXNG Search tool initialized")
+            except Exception as e:
+                _LOGGER.error(f"Failed to initialize SearXNG Search tool: {e}")
 
         # Load read_url tool if search is enabled
-        if search_provider in ["brave", "duckduckgo"]:
+        if search_provider in ["brave", "duckduckgo", "searxng"]:
             try:
                 from .read_url import ReadUrlTool
                 self.tools["read_url"] = ReadUrlTool(self.hass)
