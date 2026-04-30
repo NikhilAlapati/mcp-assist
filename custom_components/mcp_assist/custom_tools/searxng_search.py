@@ -12,12 +12,15 @@ class SearXNGSearchTool:
     def __init__(self, hass, local_url=None):
         """Initialize SearXNG Search tool."""
         self.hass = hass
-        # Use provided API key - no fallback for security
-        self.local_url = urljoin(local_url, "search")
+        if not local_url:
+            self.base_url = None
+        else:
+            self.base_url = urljoin(local_url, "search")
 
     async def initialize(self):
         """Initialize the tool."""
-        pass  # No logging needed
+        if not self.base_url:
+            raise ValueError("SearXNG URL is not configured")
 
     def handles_tool(self, tool_name: str) -> bool:
         """Check if this class handles the given tool."""
@@ -56,16 +59,9 @@ class SearXNGSearchTool:
 
         _LOGGER.debug(f"SearXNG Search: '{query}' (count: {count})")
 
-        headers = {
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip",
-            "X-Subscription-Token": self.api_key
-        }
-
-        # Fix: Convert all values to strings for URL parameters
         params = {
             "q": query,
-            "format": "json"
+            "format": "json",
             "language": "en",
         }
 
@@ -73,7 +69,6 @@ class SearXNGSearchTool:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     self.base_url,
-                    headers=headers,
                     params=params,
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
