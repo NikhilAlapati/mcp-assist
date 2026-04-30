@@ -1604,6 +1604,10 @@ class MCPAssistOptionsFlow(config_entries.OptionsFlow):
                                 "value": "brave",
                                 "label": "Brave Search (requires API key)",
                             },
+                            {
+                                "value": "searxng",
+                                "label": "SearXNG Search (requires local search server)",
+                            },
                         ],
                         mode=SelectSelectorMode.DROPDOWN,
                     )
@@ -1631,6 +1635,13 @@ class MCPAssistOptionsFlow(config_entries.OptionsFlow):
                         ),
                     ),
                 ): bool,
+                vol.Optional(
+                    CONF_SEARXNG_URL,
+                    default=sys_options.get(
+                        CONF_SEARXNG_URL,
+                        sys_data.get(CONF_SEARXNG_URL, DEFAULT_SEARXNG_URL),
+                    ),
+                ): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
                 vol.Optional(
                     CONF_MAX_ENTITIES_PER_DISCOVERY,
                     default=sys_options.get(

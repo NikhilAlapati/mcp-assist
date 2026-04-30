@@ -15,7 +15,8 @@ class SearXNGSearchTool:
         if not local_url:
             self.base_url = None
         else:
-            self.base_url = urljoin(local_url, "search")
+            base_url = local_url.rstrip("/")
+            self.base_url = base_url if base_url.endswith("/search") else f"{base_url}/search"
 
     async def initialize(self):
         """Initialize the tool."""
@@ -27,10 +28,10 @@ class SearXNGSearchTool:
         return tool_name == "search"
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        """Get MCP tool definition for Brave Search."""
+        """Get MCP tool definition for SearXNG Search."""
         return [{
             "name": "search",
-            "description": "Search the web for current information using Brave Search",
+            "description": "Search the web for current information using SearXNG",
             "inputSchema": {
                 "$schema": "http://json-schema.org/draft-07/schema#",
                 "type": "object",
@@ -62,7 +63,6 @@ class SearXNGSearchTool:
         params = {
             "q": query,
             "format": "json",
-            "language": "en",
         }
 
         try:
@@ -84,21 +84,31 @@ class SearXNGSearchTool:
 
                     data = await response.json()
 
-                    # Format results for LLM
+                    results_data = data.get("results") or []
+                    if results_data is None:
+                        results_data = []
+
                     results = []
-                    for item in data.get("web", {}).get("results", [])[:count]:
+                    for item in results_data[:count]:
+                        if not isinstance(item, dict):
+                            continue
+                        title = item.get("title") or item.get("header") or item.get("url") or ""
+                        url = item.get("url", "")
+                        description = item.get("content") or item.get("text") or item.get("snippet") or ""
                         results.append({
-                            "title": item.get("title", ""),
-                            "url": item.get("url", ""),
-                            "description": item.get("content", "")
+                            "title": title,
+                            "url": url,
+                            "description": description,
                         })
 
-                    # Format as text for the LLM
                     text_results = f"🔍 Search results for '{query}':\n\n"
-                    for i, result in enumerate(results, 1):
-                        text_results += f"{i}. **{result['title']}**\n"
-                        text_results += f"   {result['url']}\n"
-                        text_results += f"   {result['description']}\n\n"
+                    if results:
+                        for i, result in enumerate(results, 1):
+                            text_results += f"{i}. **{result['title']}**\n"
+                            text_results += f"   {result['url']}\n"
+                            text_results += f"   {result['description']}\n\n"
+                    else:
+                        text_results += "No search results were returned.\n\n"
 
                     return {
                         "content": [{
