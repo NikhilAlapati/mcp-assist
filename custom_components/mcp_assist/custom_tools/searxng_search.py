@@ -84,7 +84,7 @@ class SearXNGSearchTool:
 
                     data = await response.json()
 
-                    results_data = data.get("results") or []
+                    results_data = data.get("results")
                     if results_data is None:
                         results_data = []
 
@@ -92,9 +92,9 @@ class SearXNGSearchTool:
                     for item in results_data[:count]:
                         if not isinstance(item, dict):
                             continue
-                        title = item.get("title") or item.get("header") or item.get("url") or ""
+                        title = item.get("title","")
                         url = item.get("url", "")
-                        description = item.get("content") or item.get("text") or item.get("snippet") or ""
+                        description = item.get("content","")
                         results.append({
                             "title": title,
                             "url": url,
