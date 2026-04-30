@@ -1,7 +1,7 @@
 {
-  "domain": "mcp_assist_test",
-  "name": "MCP Assist-Test",
-  "codeowners": ["@NikhilAlapati"],
+  "domain": "mcp_assist",
+  "name": "MCP Assist",
+  "codeowners": ["@mike-nott"],
   "config_flow": true,
   "dependencies": ["conversation", "recorder"],
   "documentation": "https://github.com/mike-nott/mcp-assist",
